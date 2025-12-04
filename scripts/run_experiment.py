@@ -27,7 +27,7 @@ from sklearn.metrics import (
 )
 from sklearn.mixture import GaussianMixture
 
-from bpm_privacy import PrivateGMM, PrivateKMeans, PrivateTMM, TMM
+from bpm_privacy import BPGT, PrivateGMM, PrivateKMeans, PrivateTMM, TMM
 
 
 def normalize_data(X: np.ndarray) -> np.ndarray:
@@ -144,7 +144,7 @@ def run_baseline(
         model.fit(X)
         labels = model.predict(X)
         centers = model.means_
-    elif algorithm == "tmm":
+    elif algorithm in {"tmm", "bpgt"}:
         model = TMM(
             n_components=n_clusters,
             nu=nu,
@@ -175,6 +175,7 @@ def run_private_trials(
     nu: float,
     alpha: float,
     max_iter: int,
+    bpgt_params: Optional[dict] = None,
 ) -> Dict[str, float]:
     """Execute multiple private trials and aggregate metrics."""
     trial_results: List[TrialMetrics] = []
@@ -204,6 +205,19 @@ def run_private_trials(
                 max_iter=max_iter,
                 random_state=trial_seed,
                 fixed_nu=True,
+            )
+        elif algorithm == "bpgt":
+            cfg = bpgt_params or {}
+            model = BPGT(
+                n_clusters=n_clusters,
+                epsilon=epsilon,
+                L=L,
+                random_state=trial_seed,
+                gd_lr=cfg.get("gd_lr", 0.05),
+                gd_tol=cfg.get("gd_tol", 1e-3),
+                gd_max_iter=cfg.get("gd_max_iter", 200),
+                tmm_max_iter=cfg.get("tmm_max_iter", 100),
+                tmm_tol=cfg.get("tmm_tol", 1e-3),
             )
         else:
             raise ValueError(f"Unsupported algorithm '{algorithm}'.")
@@ -303,7 +317,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--samples", type=int, default=300, help="Number of samples for synthetic datasets.")
     parser.add_argument("--features", type=int, default=2, help="Number of features for synthetic datasets.")
     parser.add_argument("--clusters", type=int, default=3, help="Number of clusters/components.")
-    parser.add_argument("--algorithms", nargs="+", default=["kmeans"], choices=["kmeans", "gmm", "tmm"])
+    parser.add_argument(
+        "--algorithms",
+        nargs="+",
+        default=["kmeans"],
+        choices=["kmeans", "gmm", "tmm", "bpgt"],
+    )
     parser.add_argument("--epsilons", nargs="+", type=float, default=[1.0, 2.0, 4.0])
     parser.add_argument("--Ls", nargs="+", type=float, default=[0.3])
     parser.add_argument("--trials", type=int, default=3)
@@ -314,6 +333,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tmm-nu", type=float, default=15.0)
     parser.add_argument("--tmm-alpha", type=float, default=0.01)
     parser.add_argument("--tmm-max-iter", type=int, default=200)
+    parser.add_argument("--bpgt-gd-lr", type=float, default=0.05)
+    parser.add_argument("--bpgt-gd-tol", type=float, default=1e-3)
+    parser.add_argument("--bpgt-gd-max-iter", type=int, default=200)
+    parser.add_argument("--bpgt-tmm-max-iter", type=int, default=100)
+    parser.add_argument("--bpgt-tmm-tol", type=float, default=1e-3)
     return parser.parse_args()
 
 
@@ -364,6 +388,13 @@ def main() -> None:
                     args.tmm_nu,
                     args.tmm_alpha,
                     args.tmm_max_iter,
+                    bpgt_params=dict(
+                        gd_lr=args.bpgt_gd_lr,
+                        gd_tol=args.bpgt_gd_tol,
+                        gd_max_iter=args.bpgt_gd_max_iter,
+                        tmm_max_iter=args.bpgt_tmm_max_iter,
+                        tmm_tol=args.bpgt_tmm_tol,
+                    ),
                 )
                 results.append(
                     {

@@ -19,9 +19,12 @@ from .sampling import bpm_sampling, sample_f1, sample_f2, sample_radius
 from .private_kmeans import PrivateKMeans
 from .private_gmm import PrivateGMM
 from .private_tmm import PrivateTMM, TMM
+from .bpgt import BPGM, BPGT
 
 __all__ = [
     "BPM",
+    "BPGM",
+    "BPGT",
     "PrivateGMM",
     "PrivateKMeans",
     "PrivateTMM",
