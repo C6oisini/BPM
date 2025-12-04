@@ -1,197 +1,182 @@
-# BPM: Bounded Perturbation Mechanism for Privacy-Preserving K-means Clustering
+# BPM Privacy Toolkit
 
-This repository contains a complete implementation of the **Bounded Perturbation Mechanism (BPM)** as described in the paper:
+An open-source implementation of the **Bounded Perturbation Mechanism (BPM)** for privacy-preserving clustering.  
+The goal of this repository is to provide a production-ready Python package plus a pair of reusable scripts that make it easy to reproduce the results from *“K-means clustering with local dχ-privacy”* and adapt them to new datasets.
 
-> **"K-means clustering with local d_χ-privacy for privacy-preserving data analysis"**
-> by Mengmeng Yang, Ivan Tjuawinata, and Kwok-Yan Lam
-> *Journal of LaTeX Class Files, Vol. 14, No. 8, August 2021*
+---
 
-## Overview
+## Highlights
 
-The BPM mechanism provides **ε-d_E privacy** (distance-based differential privacy with Euclidean distance) for privacy-preserving K-means clustering. Unlike traditional mechanisms that treat each dimension independently, BPM perturbs the data as a whole with a bounded output space.
+- **Complete BPM primitives** – `bpm_privacy.BPM` exposes λ<sub>L</sub>, p<sub>L</sub>, λ<sub>2,r</sub>, density evaluation, and the exact sampling routines described in the paper.
+- **Drop-in private clustering** – `PrivateKMeans`, `PrivateGMM`, and `PrivateTMM` encapsulate the “user-side perturbation + server-side clustering” workflow so you can adopt BPM with one import.
+- **Single entry point for experiments** – `scripts/run_experiment.py` sweeps ε/L grids, runs multiple trials, and exports SSE / Silhouette / ARI / NMI summaries to stdout or CSV.
+- **Mechanism inspection utility** – `scripts/inspect_mechanism.py` prints numerical constants and optionally visualizes 2-D sampling behavior for sanity checks.
+- **Tested building blocks** – the lightweight `pytest` suite covers both the mechanism math and the K-means integration to catch regressions early.
 
-### Key Features
-
-- **ε-d_E Privacy**: Distinguishability based on Euclidean distance between data points
-- **Bounded Output Space**: Reports are sampled from R_L = [-L, 1+L]^d, ensuring interpretability
-- **Dimension-Independent**: No need to split privacy budget across dimensions
-- **Exact Implementation**: Follows all mathematical formulas from the paper precisely
-
-## Implementation Details
-
-### Core Components
-
-1. **BPM Mechanism** (`bpm/mechanism.py`)
-   - Computes normalization constant λ_L (Lemma 4)
-   - Computes sampling probability p_L
-   - Implements density function: f_v^(L)(x) = λ_L · exp(-k · min{||x-v||_2, L})
-
-2. **Sampling Algorithms** (`bpm/sampling.py`)
-   - Algorithm 2: Two-stage BPM sampling
-   - Algorithm 3: Uniform sampling outside ball
-   - Algorithm 4: Exponential sampling inside ball
-
-3. **Private K-means** (`clustering/kmeans.py`)
-   - Algorithm 1: Privacy-preserving K-means clustering
-   - User-side: Local perturbation with BPM
-   - Server-side: Standard K-means on perturbed data
-
-### Mathematical Formulas (from the Paper)
-
-**Data Domain**: D = [0,1]^d
-
-**Report Space**: R_L = [-L, 1+L]^d
-
-**Density Function** (Equation 2):
-```
-f_v^(L)(x) = λ_L · exp(-k · min{||x-v||_2, L})
-```
-
-**Normalization Constant** (Lemma 4):
-```
-λ_L = μ_L^(-1)
-μ_L = B_L^(d) + e^(-kL) · [(1+2L)^d - V_L^(d)]
-```
-
-where:
-- k = ε (privacy parameter)
-- B_L^(d) is the integral over the ball
-- V_L^(d) is the volume of the d-dimensional ball
-
-**Privacy Guarantee** (Theorem 8):
-The BPM mechanism satisfies ε-d_E privacy when k is set to ε.
+---
 
 ## Installation
 
+### Recommended: uv workflow
+
+[uv](https://github.com/astral-sh/uv) provides deterministic lockfiles (`uv.lock`) and fast isolated environments.
+
 ```bash
-# Install required packages
-pip install numpy scipy scikit-learn matplotlib
+uv venv                               # creates .venv using settings from pyproject
+source .venv/bin/activate             # PowerShell: .\.venv\Scripts\Activate.ps1
+uv pip install -e .                   # editable install with uv’s resolver
+# optional extras
+uv pip install -r requirements.txt    # installs pinned runtime dependencies
 ```
 
-## Usage
+You can then execute any script via `uv run`, e.g. `uv run scripts/run_experiment.py ...` or `uv run pytest`.
 
-### Basic Example
+### Plain pip (alternative)
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+pip install -r requirements.txt  # optional pinned spec
+```
+
+---
+
+## Repository layout
+
+```
+.
+├── bpm_privacy/              # reusable Python package
+│   ├── mechanism.py          # λL, pL, μL, λ2r, density helpers
+│   ├── sampling.py           # Algorithms 2/3/4 from the paper
+│   ├── private_kmeans.py     # Algorithm 1 implementation
+│   ├── private_gmm.py        # BPM-augmented Gaussian Mixture Model
+│   └── private_tmm.py        # Student's t Mixture + BPM
+├── scripts/
+│   ├── run_experiment.py     # CLI for batch experiments
+│   └── inspect_mechanism.py  # CLI for λL / pL diagnostics
+├── tests/                    # pytest-based regression checks
+├── figures/                  # archived example plots (optional)
+├── BPM.pdf                   # original paper for reference
+├── pyproject.toml
+├── requirements.txt
+└── uv.lock
+```
+
+---
+
+## Quick start
+
+### 1. Run a full experiment sweep
+
+```bash
+python scripts/run_experiment.py \
+  --dataset iris \
+  --algorithms kmeans gmm \
+  --epsilons 0.5 1 2 4 \
+  --Ls 0.3 0.5 \
+  --trials 5 \
+  --csv results.csv
+```
+
+Key CLI options:
+
+| Flag | Description |
+|------|-------------|
+| `--dataset {iris,blobs}` | Use the Iris benchmark or generate synthetic blobs. |
+| `--algorithms {kmeans,gmm,tmm}` | Evaluate one or more algorithms in a single run. |
+| `--epsilons`, `--Ls` | Provide one or many ε/L values to map the privacy–utility trade-off. |
+| `--trials N` | Repeat each configuration `N` times and average the metrics. |
+| `--skip-baseline` | Skip the non-private baseline if you only need private runs. |
+| `--csv path` | Persist the summary table for downstream analysis. |
+| `--plot path` | Save multi-metric line charts (SSE/Silhouette/ARI/NMI vs ε) for every algorithm/L pair. |
+
+**Enumerated CLI options from `scripts/run_experiment.py`:**
+
+- `--dataset {iris, blobs}`
+- `--algorithms {kmeans, gmm, tmm}`
+- `--Ls` accepts any float(s); use multiple values to explore different bounds.
+- `--epsilons` accepts any float(s); defaults to `1.0 2.0 4.0`.
+
+For completeness, the remaining parameters are continuous/integers: `--samples`, `--features`, `--clusters`, `--trials`, `--seed`, `--tmm-nu`, `--tmm-alpha`, `--tmm-max-iter`, plus the flags `--skip-baseline` and `--csv`.
+
+The script automatically normalizes every dataset to `[0,1]^d` so the BPM assumptions hold.
+
+### 2. Inspect mechanism constants and sampling quality
+
+```bash
+python scripts/inspect_mechanism.py \
+  --epsilon 2.0 \
+  --L 0.3 \
+  --dimension 2 \
+  --samples 2000 \
+  --plot figures/bpm_scatter.png
+```
+
+This command prints λ<sub>L</sub>, p<sub>L</sub>, λ<sub>2,r</sub>, and validates that the empirical fraction of samples inside the L-ball matches the theoretical probability.  
+In 2-D, it also saves a scatter plot that highlights the ball boundary and report space.
+
+### 3. Rebuild legacy figures
+
+Need the original PNGs from the paper replication? Run:
+
+```bash
+python scripts/legacy_figures.py           # regenerates every historical figure
+python scripts/legacy_plots.py             # focused Iris metric curves & scatter grid
+python scripts/legacy_figures.py --figures bpm_sampling_distribution iris_evaluation
+```
+
+All figures are saved under `figures/` using their historical filenames (e.g., `iris_evaluation.png`, `all_methods_comparison.png`), so downstream docs continue to work.
+
+### 4. Integrate directly in your own pipeline
 
 ```python
 import numpy as np
 from sklearn.datasets import make_blobs
-from clustering import PrivateKMeans
+from bpm_privacy import PrivateKMeans
 
-# Generate data
 X, _ = make_blobs(n_samples=300, n_features=2, centers=3, random_state=42)
+X = (X - X.min(axis=0)) / (X.max(axis=0) - X.min(axis=0))  # map to [0,1]^d
 
-# Normalize to [0,1]^d (required by BPM)
-X_normalized = (X - X.min(axis=0)) / (X.max(axis=0) - X.min(axis=0))
-
-# Run private K-means
-kmeans = PrivateKMeans(
-    n_clusters=3,
-    epsilon=2.0,  # Privacy budget
-    L=0.3,        # Threshold distance
-    random_state=42
-)
-kmeans.fit(X_normalized)
-
-# Compute SSE
-sse = kmeans.compute_sse(X_normalized)
-print(f"SSE: {sse:.4f}")
+model = PrivateKMeans(n_clusters=3, epsilon=2.0, L=0.4, random_state=42)
+model.fit(X)
+labels = model.predict(X)
+print("Private SSE:", model.compute_sse(X))
 ```
 
-### Running Examples
+---
+
+## Testing
 
 ```bash
-# Comprehensive example with visualization
-python example.py
-
-# Test BPM sampling distribution
-python debug_bpm.py
-
-# Find optimal L value
-python test_optimal_L.py
-
-# Run basic tests
-python test_bpm.py
+pytest
 ```
 
-## File Structure
+- `tests/test_mechanism.py` confirms that densities decrease with distance, all samples stay inside the report cube, and the inside-ball probability matches p<sub>L</sub>.
+- `tests/test_private_kmeans.py` checks that perturbations respect bounds and that increasing ε improves SSE (within a tolerance), giving you confidence in the privacy/utility trade-off.
 
-```
-.
-├── bpm/
-│   ├── __init__.py          # Package initialization
-│   ├── mechanism.py         # BPM mechanism and constants
-│   └── sampling.py          # Sampling algorithms (Alg 2, 3, 4)
-│
-├── clustering/
-│   ├── __init__.py          # Package initialization
-│   └── kmeans.py            # Private K-means (Algorithm 1)
-│
-├── example.py               # Comprehensive usage example
-├── test_bpm.py             # Basic tests
-├── test_optimal_L.py       # L value optimization
-├── debug_bpm.py            # Sampling distribution analysis
-│
-├── BPM.pdf                 # Original paper
-└── README.md               # This file
-```
+---
 
-## Privacy-Utility Tradeoff
+## Roadmap
 
-The privacy-utility tradeoff is controlled by two parameters:
+- [ ] Add Laplace / Gaussian baselines for direct comparisons.
+|- [ ] Provide ready-to-run Jupyter notebooks for teaching/demo purposes.
+|- [ ] Publish pre-generated CSV benchmarks for typical ε/L grids.
 
-- **ε (epsilon)**: Privacy budget. Higher ε means less privacy but better utility.
-- **L (threshold)**: Determines report space size. Optimal L depends on ε and data dimension.
+Contributions are welcome! Please open an issue for feature proposals or submit a PR directly.
 
-### Example Results (2D data, 3 clusters)
+---
 
-| ε   | L   | SSE    | SSE Increase |
-|-----|-----|--------|--------------|
-| 1.0 | 0.3 | 8.63   | 1399%       |
-| 2.0 | 0.3 | 4.02   | 597%        |
-| 4.0 | 0.3 | 5.03   | 772%        |
-| 4.0 | 0.5 | 1.79   | 211%        |
+## Citation
 
-Standard (no privacy): SSE = 0.58
+If you build upon this implementation in academic work, cite the original paper and optionally link back to this repository:
 
-## Implementation Verification
+> Mengmeng Yang, Ivan Tjuawinata, Kwok-Yan Lam. *K-means clustering with local dχ-privacy for privacy-preserving data analysis.* Journal of LaTeX Class Files, Vol. 14, No. 8, 2021.
 
-The implementation has been verified to:
+The PDF is included at `BPM.pdf` for convenience.
 
-1. ✓ Correctly compute λ_L and p_L using exact formulas from Lemma 4
-2. ✓ Sample from the correct distribution (verified empirically)
-3. ✓ Maintain all samples in report space R_L = [-L, 1+L]^d
-4. ✓ Follow the two-stage sampling procedure (Algorithm 2)
-5. ✓ Satisfy the privacy guarantee (Theorem 8)
+---
 
-### Verification Tests
+## License & attribution
 
-```bash
-# Verify sampling distribution matches expected p_L
-python debug_bpm.py
-
-# Output should show:
-# - Samples inside ball ≈ p_L (e.g., 22.5% vs 21.8% expected)
-# - All samples in [-L, 1+L]^d
-# - Density decreases exponentially up to L, then constant
-```
-
-## Key Differences from Traditional Mechanisms
-
-| Aspect | Traditional Laplace | BPM |
-|--------|-------------------|-----|
-| Privacy budget split | Yes (ε/d per dimension) | No (ε total) |
-| Output space | Unbounded (R^d) | Bounded ([-L,1+L]^d) |
-| Perturbation | Per-dimension | Whole vector |
-| Variance growth | O(d^3) | O(d) |
-
-## References
-
-[1] M. Yang, I. Tjuawinata, and K.-Y. Lam, "K-means clustering with local d_χ-privacy for privacy-preserving data analysis," *Journal of LaTeX Class Files*, vol. 14, no. 8, 2021.
-
-## License
-
-This implementation is for academic and research purposes. Please cite the original paper if you use this code in your research.
-
-## Contact
-
-For questions about the implementation, please refer to the original paper or open an issue in this repository.
+This toolkit is released for research and practical experimentation. Please ensure that any downstream use complies with your jurisdiction’s privacy regulations and that the original authors of BPM are credited appropriately. If you have questions or would like to showcase a project built on top of this work, feel free to open an issue. 

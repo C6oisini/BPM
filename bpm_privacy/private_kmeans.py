@@ -7,8 +7,9 @@ K-means clustering with ε-d_E privacy.
 
 import numpy as np
 from sklearn.cluster import KMeans as SKLearnKMeans
-from bpm import BPM
-from bpm.sampling import bpm_sampling
+
+from .mechanism import BPM
+from .sampling import bpm_sampling
 
 
 class PrivateKMeans:

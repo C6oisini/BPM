@@ -6,8 +6,9 @@
 
 import numpy as np
 from sklearn.mixture import GaussianMixture
-from bpm import BPM
-from bpm.sampling import bpm_sampling
+
+from .mechanism import BPM
+from .sampling import bpm_sampling
 
 
 class PrivateGMM:

@@ -7,8 +7,9 @@ which is a robust clustering algorithm based on Student's t distribution.
 
 import numpy as np
 from scipy.special import digamma  # psi function in MATLAB
-from bpm.mechanism import BPM
-from bpm.sampling import bpm_sampling
+
+from .mechanism import BPM
+from .sampling import bpm_sampling
 
 
 class TMM:
@@ -39,7 +40,7 @@ class TMM:
 
     def __init__(self, n_components=3, nu=15.0, alpha=0.01,
                  max_iter=500, tol=0.1, convergence_count=3,
-                 random_state=None, fixed_nu=False):
+                 random_state=None, fixed_nu=False, verbose=False):
         self.n_components = n_components
         self.nu = nu
         self.alpha = alpha
@@ -48,6 +49,7 @@ class TMM:
         self.convergence_count = convergence_count
         self.random_state = random_state
         self.fixed_nu = fixed_nu  # Whether to fix nu or estimate it
+        self.verbose = verbose
 
         # Parameters to be learned
         self.means_ = None
@@ -171,11 +173,13 @@ class TMM:
                 c = (p + nu) / 2
 
             # Print progress
-            print(f'Iteration: {itr}, Q: {Q:.4f}, nu: {nu:.4f}, alpha: {alpha:.6f}')
+            if self.verbose:
+                print(f'Iteration: {itr}, Q: {Q:.4f}, nu: {nu:.4f}, alpha: {alpha:.6f}')
 
             # Check convergence
             if np.isnan(Q):
-                print("Q became NaN, stopping.")
+                if self.verbose:
+                    print("Q became NaN, stopping.")
                 break
 
             if abs(Q_old - Q) < self.tol or abs(dQ - abs(Q_old - Q)) < self.tol:
@@ -309,7 +313,7 @@ class PrivateTMM:
 
     def __init__(self, n_components=3, epsilon=1.0, L=1.0, nu=15.0,
                  alpha=0.01, max_iter=500, tol=0.1, random_state=None,
-                 fixed_nu=False):
+                 fixed_nu=False, verbose=False):
         self.n_components = n_components
         self.epsilon = epsilon
         self.L = L
@@ -319,6 +323,7 @@ class PrivateTMM:
         self.tol = tol
         self.random_state = random_state
         self.fixed_nu = fixed_nu
+        self.verbose = verbose
 
         # Will be set after fitting
         self.means_ = None
@@ -341,7 +346,8 @@ class PrivateTMM:
         n_samples, d = X.shape
 
         # Step 1: User side - BPM perturbation
-        print(f"Step 1: Applying BPM perturbation (epsilon={self.epsilon}, L={self.L})")
+        if self.verbose:
+            print(f"Step 1: Applying BPM perturbation (epsilon={self.epsilon}, L={self.L})")
         bpm = BPM(epsilon=self.epsilon, L=self.L, dimension=d)
 
         X_perturbed = np.zeros_like(X)
@@ -356,7 +362,8 @@ class PrivateTMM:
             X_perturbed[i] = x_perturbed
 
         # Step 2: Server side - fit TMM on perturbed data
-        print(f"Step 2: Fitting TMM on perturbed data")
+        if self.verbose:
+            print(f"Step 2: Fitting TMM on perturbed data")
         self.tmm_ = TMM(
             n_components=self.n_components,
             nu=self.nu,
@@ -364,7 +371,8 @@ class PrivateTMM:
             max_iter=self.max_iter,
             tol=self.tol,
             random_state=self.random_state,
-            fixed_nu=self.fixed_nu
+            fixed_nu=self.fixed_nu,
+            verbose=self.verbose
         )
         self.tmm_.fit(X_perturbed)
 
