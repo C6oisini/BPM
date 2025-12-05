@@ -3,8 +3,8 @@
 Consolidated experiment runner for BPM-based clustering.
 
 Usage examples:
-    python scripts/run_experiment.py --dataset iris --algorithms kmeans gmm --epsilons 1 2 4
-    python scripts/run_experiment.py --dataset blobs --clusters 4 --algorithms kmeans \
+    python scripts/run_experiment.py --dataset iris --mechanisms bpm bpgm --servers kmeans gmm --epsilons 1 2 4
+    python scripts/run_experiment.py --dataset blobs --clusters 4 --mechanisms bpgm --servers tmm \
         --epsilons 0.5 1 --Ls 0.2 0.4 --trials 5 --csv results.csv
 """
 
@@ -27,7 +27,17 @@ from sklearn.metrics import (
 )
 from sklearn.mixture import GaussianMixture
 
-from bpm_privacy import BPGT, PrivateGMM, PrivateKMeans, PrivateTMM, TMM
+from bpm_privacy import (
+    ClientMechanism,
+    BPMMechanism,
+    BPGMMechanism,
+    GMMServer,
+    ServerAlgorithm,
+    KMeansServer,
+    PrivacyClusteringPipeline,
+    TMM,
+    TMMServer,
+)
 
 
 def normalize_data(X: np.ndarray) -> np.ndarray:
@@ -124,32 +134,74 @@ def summarize_metrics(X: np.ndarray, y_true: Optional[np.ndarray], trial_results
     }
 
 
+def create_mechanism(
+    name: str,
+    epsilon: float,
+    L: float,
+    seed: int,
+    bpgt_args: Dict[str, float],
+) -> ClientMechanism:
+    if name == "bpm":
+        return BPMMechanism(epsilon=epsilon, L=L, random_state=seed)
+    if name == "bpgm":
+        return BPGMMechanism(
+            epsilon=epsilon,
+            L=L,
+            random_state=seed,
+            lr=bpgt_args["gd_lr"],
+            tol=bpgt_args["gd_tol"],
+            max_iter=bpgt_args["gd_max_iter"],
+        )
+    raise ValueError(f"Unknown mechanism '{name}'")
+
+
+def create_server(
+    name: str,
+    n_clusters: int,
+    seed: int,
+    tmm_params: Dict[str, float],
+) -> ServerAlgorithm:
+    if name == "kmeans":
+        return KMeansServer(n_clusters=n_clusters, random_state=seed)
+    if name == "gmm":
+        return GMMServer(n_components=n_clusters, random_state=seed)
+    if name == "tmm":
+        return TMMServer(
+            n_components=n_clusters,
+            nu=tmm_params["nu"],
+            alpha=tmm_params["alpha"],
+            max_iter=tmm_params["max_iter"],
+            tol=tmm_params["tol"],
+            random_state=seed,
+        )
+    raise ValueError(f"Unknown server '{name}'")
+
+
 def run_baseline(
-    algorithm: str,
+    server: str,
     X: np.ndarray,
     y_true: Optional[np.ndarray],
     n_clusters: int,
     seed: int,
-    nu: float,
-    alpha: float,
-    max_iter: int,
+    tmm_params: Dict[str, float],
 ) -> Dict[str, float]:
-    """Execute the non-private baseline for an algorithm."""
-    if algorithm == "kmeans":
+    """Non-private baseline using the specified server-side algorithm only."""
+    if server == "kmeans":
         model = KMeans(n_clusters=n_clusters, n_init=10, random_state=seed)
         labels = model.fit_predict(X)
         centers = model.cluster_centers_
-    elif algorithm == "gmm":
+    elif server == "gmm":
         model = GaussianMixture(n_components=n_clusters, n_init=10, random_state=seed)
         model.fit(X)
         labels = model.predict(X)
         centers = model.means_
-    elif algorithm in {"tmm", "bpgt"}:
+    elif server == "tmm":
         model = TMM(
             n_components=n_clusters,
-            nu=nu,
-            alpha=alpha,
-            max_iter=max_iter,
+            nu=tmm_params["nu"],
+            alpha=tmm_params["alpha"],
+            max_iter=tmm_params["max_iter"],
+            tol=tmm_params["tol"],
             random_state=seed,
             fixed_nu=True,
         )
@@ -157,14 +209,14 @@ def run_baseline(
         labels = model.labels_
         centers = model.means_
     else:
-        raise ValueError(f"Unsupported algorithm '{algorithm}'.")
+        raise ValueError(f"Unsupported server '{server}'.")
 
-    metrics = summarize_metrics(X, y_true, [TrialMetrics(labels=labels, centers=centers)])
-    return metrics
+    return summarize_metrics(X, y_true, [TrialMetrics(labels=labels, centers=centers)])
 
 
 def run_private_trials(
-    algorithm: str,
+    mechanism_name: str,
+    server_name: str,
     X: np.ndarray,
     y_true: Optional[np.ndarray],
     n_clusters: int,
@@ -172,65 +224,20 @@ def run_private_trials(
     L: float,
     trials: int,
     seed: int,
-    nu: float,
-    alpha: float,
-    max_iter: int,
-    bpgt_params: Optional[dict] = None,
+    tmm_params: Dict[str, float],
+    bpgt_params: Dict[str, float],
 ) -> Dict[str, float]:
     """Execute multiple private trials and aggregate metrics."""
     trial_results: List[TrialMetrics] = []
     for t in range(trials):
         trial_seed = seed + t
-        if algorithm == "kmeans":
-            model = PrivateKMeans(
-                n_clusters=n_clusters,
-                epsilon=epsilon,
-                L=L,
-                random_state=trial_seed,
-            )
-        elif algorithm == "gmm":
-            model = PrivateGMM(
-                n_components=n_clusters,
-                epsilon=epsilon,
-                L=L,
-                random_state=trial_seed,
-            )
-        elif algorithm == "tmm":
-            model = PrivateTMM(
-                n_components=n_clusters,
-                epsilon=epsilon,
-                L=L,
-                nu=nu,
-                alpha=alpha,
-                max_iter=max_iter,
-                random_state=trial_seed,
-                fixed_nu=True,
-            )
-        elif algorithm == "bpgt":
-            cfg = bpgt_params or {}
-            model = BPGT(
-                n_clusters=n_clusters,
-                epsilon=epsilon,
-                L=L,
-                random_state=trial_seed,
-                gd_lr=cfg.get("gd_lr", 0.05),
-                gd_tol=cfg.get("gd_tol", 1e-3),
-                gd_max_iter=cfg.get("gd_max_iter", 200),
-                tmm_max_iter=cfg.get("tmm_max_iter", 100),
-                tmm_tol=cfg.get("tmm_tol", 1e-3),
-            )
-        else:
-            raise ValueError(f"Unsupported algorithm '{algorithm}'.")
-
-        model.fit(X)
-        if hasattr(model, "predict"):
-            labels = model.predict(X)
-        else:
-            labels = getattr(model, "labels_", None)
-        centers = getattr(model, "cluster_centers_", None)
-        if centers is None:
-            centers = getattr(model, "means_", None)
-        trial_results.append(TrialMetrics(labels=labels, centers=centers))
+        mechanism = create_mechanism(mechanism_name, epsilon, L, trial_seed, bpgt_params)
+        server = create_server(server_name, n_clusters, trial_seed, tmm_params)
+        pipeline = PrivacyClusteringPipeline(mechanism, server, n_clusters=n_clusters)
+        pipeline.fit(X)
+        trial_results.append(
+            TrialMetrics(labels=pipeline.predict(X), centers=pipeline.cluster_centers_)
+        )
 
     return summarize_metrics(X, y_true, trial_results)
 
@@ -241,12 +248,12 @@ def format_float(value: float) -> str:
 
 def print_table(rows: List[Dict[str, object]]) -> None:
     """Pretty-print experiment results."""
-    header = f"{'Mode':<10} {'Algorithm':<10} {'ε':<6} {'L':<6} {'SSE':<12} {'Silhouette':<12} {'ARI':<12} {'NMI':<12}"
+    header = f"{'Mode':<10} {'Mechanism':<12} {'Server':<10} {'ε':<6} {'L':<6} {'SSE':<12} {'Silhouette':<12} {'ARI':<12} {'NMI':<12}"
     print(header)
     print("-" * len(header))
     for row in rows:
         print(
-            f"{row['mode']:<10} {row['algorithm']:<10} "
+            f"{row['mode']:<10} {str(row['mechanism']):<12} {row['server']:<10} "
             f"{(row['epsilon'] if row['epsilon'] is not None else '-'):>6} "
             f"{(row['L'] if row['L'] is not None else '-'):>6} "
             f"{format_float(row['sse']):<12} "
@@ -261,7 +268,7 @@ def maybe_write_csv(path: Optional[Path], rows: List[Dict[str, object]]) -> None
     if path is None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["mode", "algorithm", "epsilon", "L", "sse", "silhouette", "ari", "nmi"]
+    fieldnames = ["mode", "mechanism", "server", "epsilon", "L", "sse", "silhouette", "ari", "nmi"]
     with path.open("w", newline="") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
@@ -275,20 +282,25 @@ def plot_curves(rows: List[Dict[str, object]], output: Optional[Path]) -> None:
         return
 
     series_keys = sorted(
-        {(row["algorithm"], row["L"]) for row in rows if row["mode"] == "private"}
+        {
+            (row["mechanism"], row["server"], row["L"])
+            for row in rows
+            if row["mode"] == "private"
+        }
     )
     epsilons = sorted({row["epsilon"] for row in rows if row["epsilon"] is not None})
     metrics = ["sse", "silhouette", "ari", "nmi"]
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
     for metric, ax in zip(metrics, axes.flatten()):
-        for algorithm, L in series_keys:
+        for mechanism, server, L in series_keys:
             ys = []
             for epsilon in epsilons:
                 for row in rows:
                     if (
                         row["mode"] == "private"
-                        and row["algorithm"] == algorithm
+                        and row["mechanism"] == mechanism
+                        and row["server"] == server
                         and row["L"] == L
                         and row["epsilon"] == epsilon
                     ):
@@ -300,7 +312,7 @@ def plot_curves(rows: List[Dict[str, object]], output: Optional[Path]) -> None:
                 epsilons,
                 ys,
                 marker="o",
-                label=f"{algorithm} (L={L})",
+                label=f"{mechanism}+{server} (L={L})",
             )
         ax.set_xlabel("ε")
         ax.set_ylabel(metric.upper())
@@ -318,10 +330,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--features", type=int, default=2, help="Number of features for synthetic datasets.")
     parser.add_argument("--clusters", type=int, default=3, help="Number of clusters/components.")
     parser.add_argument(
-        "--algorithms",
+        "--mechanisms",
+        nargs="+",
+        default=["bpm"],
+        choices=["bpm", "bpgm"],
+    )
+    parser.add_argument(
+        "--servers",
         nargs="+",
         default=["kmeans"],
-        choices=["kmeans", "gmm", "tmm", "bpgt"],
+        choices=["kmeans", "gmm", "tmm"],
     )
     parser.add_argument("--epsilons", nargs="+", type=float, default=[1.0, 2.0, 4.0])
     parser.add_argument("--Ls", nargs="+", type=float, default=[0.3])
@@ -333,6 +351,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tmm-nu", type=float, default=15.0)
     parser.add_argument("--tmm-alpha", type=float, default=0.01)
     parser.add_argument("--tmm-max-iter", type=int, default=200)
+    parser.add_argument("--tmm-tol", type=float, default=1e-3)
     parser.add_argument("--bpgt-gd-lr", type=float, default=0.05)
     parser.add_argument("--bpgt-gd-tol", type=float, default=1e-3)
     parser.add_argument("--bpgt-gd-max-iter", type=int, default=200)
@@ -351,60 +370,66 @@ def main() -> None:
 
     results: List[Dict[str, object]] = []
 
+    tmm_params = {
+        "nu": args.tmm_nu,
+        "alpha": args.tmm_alpha,
+        "max_iter": args.tmm_max_iter,
+        "tol": args.tmm_tol,
+    }
+    bpgt_params = {
+        "gd_lr": args.bpgt_gd_lr,
+        "gd_tol": args.bpgt_gd_tol,
+        "gd_max_iter": args.bpgt_gd_max_iter,
+    }
+
     if not args.skip_baseline:
-        for algorithm in args.algorithms:
+        for server in args.servers:
             baseline_metrics = run_baseline(
-                algorithm,
+                server,
                 X,
                 y_true,
                 n_clusters,
                 args.seed,
-                args.tmm_nu,
-                args.tmm_alpha,
-                args.tmm_max_iter,
+                tmm_params,
             )
             results.append(
                 {
                     "mode": "baseline",
-                    "algorithm": algorithm,
+                    "mechanism": "none",
+                    "server": server,
                     "epsilon": None,
                     "L": None,
                     **baseline_metrics,
                 }
             )
 
-    for algorithm in args.algorithms:
-        for epsilon in args.epsilons:
-            for L in args.Ls:
-                metrics = run_private_trials(
-                    algorithm,
-                    X,
-                    y_true,
-                    n_clusters,
-                    epsilon,
-                    L,
-                    args.trials,
-                    args.seed,
-                    args.tmm_nu,
-                    args.tmm_alpha,
-                    args.tmm_max_iter,
-                    bpgt_params=dict(
-                        gd_lr=args.bpgt_gd_lr,
-                        gd_tol=args.bpgt_gd_tol,
-                        gd_max_iter=args.bpgt_gd_max_iter,
-                        tmm_max_iter=args.bpgt_tmm_max_iter,
-                        tmm_tol=args.bpgt_tmm_tol,
-                    ),
-                )
-                results.append(
-                    {
-                        "mode": "private",
-                        "algorithm": algorithm,
-                        "epsilon": epsilon,
-                        "L": L,
-                        **metrics,
-                    }
-                )
+    for mechanism in args.mechanisms:
+        for server in args.servers:
+            for epsilon in args.epsilons:
+                for L in args.Ls:
+                    metrics = run_private_trials(
+                        mechanism,
+                        server,
+                        X,
+                        y_true,
+                        n_clusters,
+                        epsilon,
+                        L,
+                        args.trials,
+                        args.seed,
+                        tmm_params,
+                        bpgt_params,
+                    )
+                    results.append(
+                        {
+                            "mode": "private",
+                            "mechanism": mechanism,
+                            "server": server,
+                            "epsilon": epsilon,
+                            "L": L,
+                            **metrics,
+                        }
+                    )
 
     print_table(results)
     maybe_write_csv(args.csv, results)

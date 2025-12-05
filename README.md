@@ -6,12 +6,13 @@
 
 ## 核心功能
 
-- **BPM / BPGM 基元**：`bpm_privacy.BPM` 与全新的 `BPGM`（截断指数噪声 + Adam 合成数据）复现原论文中的 dχ-privacy 机制。
-- **私有聚类套件**：`PrivateKMeans`、`PrivateGMM`、`PrivateTMM` 与 `BPGT`（BPGM + TK-means）封装“用户侧扰动 → 服务器聚类”的完整流程。
-- **统一实验入口**：`scripts/run_experiment.py` 扫描 ε / L 网格、重复多次求均值，输出 SSE / Silhouette / ARI / NMI 表格并可生成折线图。
+- **客户端机制可插拔**：`BPMMechanism`（经典 BPM）与 `BPGMMechanism`（截断指数噪声 + Adam 合成数据）分别实现两种 dχ-privacy 隐私扰动。
+- **服务器算法独立**：`KMeansServer`、`GMMServer`、`TMMServer` 在服务器端处理扰动数据；任意机制 × 算法组合都可通过 `PrivacyClusteringPipeline` 组装。
+- **BPGT 兼容**：`BPGT` 仅是 `BPGMMechanism + TMMServer` 的组合，保留原论文接口同时支持自由组合。
+- **统一实验入口**：`scripts/run_experiment.py` 扫描 ε / L 网格、重复多次取均值，输出 SSE / Silhouette / ARI / NMI 表格并可生成每个机制/算法/L 的折线图。
 - **机制诊断 CLI**：`scripts/inspect_mechanism.py` 打印 λ<sub>L</sub>、p<sub>L</sub>、λ<sub>2,r</sub> 等常数，可在 2D 场景下可视化采样分布。
 - **历史图表复现**：`scripts/legacy_figures.py`、`scripts/legacy_plots.py` 一键输出旧仓库中的 PNG（如 `iris_evaluation.png`、`kmeans_vs_gmm.png`），方便撰写报告。
-- **pytest 覆盖**：`tests/` 内的用例验证噪声采样、BPGT 训练及 K-means 指标，便于在 CI 中自动回归。
+- **pytest 覆盖**：`tests/` 内的用例验证噪声采样、BPGM/BPGT 训练及组合式管线，便于在 CI 中自动回归。
 
 ---
 
@@ -73,22 +74,23 @@ pip install -r requirements.txt
 ```
 .
 ├── bpm_privacy/
-│   ├── mechanism.py         # BPM 数学构件
-│   ├── sampling.py          # BPM 采样算法
-│   ├── private_kmeans.py    # 私有 K-means
-│   ├── private_gmm.py       # 私有 GMM
-│   ├── private_tmm.py       # TMM / TK-means 组件
-│   └── bpgt.py              # BPGM + BPGT 框架实现
+│   ├── mechanism.py          # BPM 数学构件
+│   ├── sampling.py           # BPM 采样算法
+│   ├── mechanisms.py         # BPMMechanism / BPGMMechanism
+│   ├── server_algorithms.py  # KMeansServer / GMMServer / TMMServer
+│   ├── pipeline.py           # PrivacyClusteringPipeline（机制 × 服务器）
+│   ├── private_tmm.py        # TMM 数学实现（服务器端使用）
+│   └── bpgt.py               # BPGM 核心 + BPGT 兼容封装
 ├── scripts/
-│   ├── run_experiment.py    # 批量实验 CLI（含折线图）
-│   ├── inspect_mechanism.py # BPM 常数与采样诊断
-│   ├── legacy_figures.py    # 生成历史 PNG
-│   └── legacy_plots.py      # 经典 Iris 指标曲线
-├── tests/                   # pytest 用例
-├── figures/、figures-exp/   # 示例图输出
-├── BPM.pdf / BPGT.pdf       # 论文
+│   ├── run_experiment.py     # 批量实验 CLI（含折线图）
+│   ├── inspect_mechanism.py  # 机制常数与采样诊断
+│   ├── legacy_figures.py     # 生成历史 PNG
+│   └── legacy_plots.py       # 经典 Iris 指标曲线
+├── tests/                    # pytest 用例
+├── figures/、figures-exp/    # 示例图输出
+├── BPM.pdf / BPGT.pdf        # 论文
 ├── pyproject.toml  /  requirements.txt  /  uv.lock
-└── graduate.egg-info        # 可编辑安装元数据
+└── graduate.egg-info         # 可编辑安装元数据
 ```
 
 ---
@@ -100,7 +102,8 @@ pip install -r requirements.txt
 ```bash
 uv run scripts/run_experiment.py \
   --dataset iris \
-  --algorithms kmeans gmm tmm bpgt \
+  --mechanisms bpm bpgm \
+  --servers kmeans gmm tmm \
   --epsilons 0.5 1 2 4 \
   --Ls 0.3 0.5 \
   --trials 5 \
@@ -113,15 +116,16 @@ uv run scripts/run_experiment.py \
 | 参数 | 说明 |
 |------|------|
 | `--dataset {iris, blobs}` | 选择真实或合成数据集。 |
-| `--algorithms {kmeans, gmm, tmm, bpgt}` | 一次评估多个算法；`bpgt` 触发 BPGM + TK-means。 |
-| `--epsilons`, `--Ls` | 输入若干 ε / L 组合探索隐私-效用。 |
-| `--trials N` | 每组配置重复 N 次并求平均。 |
-| `--skip-baseline` | 仅跑隐私算法时开启。 |
+| `--mechanisms {bpm, bpgm}` | 选择客户端隐私机制（可多选，逐一组合）。 |
+| `--servers {kmeans, gmm, tmm}` | 选择服务器端聚类算法（可多选，逐一组合）。 |
+| `--epsilons`, `--Ls` | 输入若干 ε / L 组合衡量隐私-效用。 |
+| `--trials N` | 每组配置重复 N 次求平均。 |
+| `--skip-baseline` | 仅跑隐私组合时开启。 |
 | `--csv path` | 输出结果表格。 |
-| `--plot path` | 保存 SSE / Silhouette / ARI / NMI vs ε 的折线图，并区分不同 L。 |
+| `--plot path` | 保存 SSE / Silhouette / ARI / NMI vs ε 的折线图（按 Mechanism+Server+L 区分）。 |
 
-其他常用参数：`--samples`、`--features`、`--clusters`、`--seed`、`--tmm-nu`、`--tmm-alpha`、`--tmm-max-iter`。  
-若选择 `bpgt`，还可设置 `--bpgt-gd-lr`、`--bpgt-gd-tol`、`--bpgt-gd-max-iter`（合成数据 Adam 超参）以及 `--bpgt-tmm-max-iter`、`--bpgt-tmm-tol`（服务器端 TK-means 收敛阈值）。
+其他常用参数：`--samples`、`--features`、`--clusters`、`--seed`、`--tmm-*`（控制 TMMServer）。  
+若选择 `bpgm`，还可设置 `--bpgt-gd-lr`、`--bpgt-gd-tol`、`--bpgt-gd-max-iter` 控制合成数据的 Adam 步长/迭代数。
 
 ### 2. 检查 BPM / BPGM 机制
 
@@ -175,7 +179,7 @@ uv run pytest    # 或 python -m pytest
 如在研究或产品中使用此实现，请引用以下论文并（可选）附上仓库链接：
 
 > Mengmeng Yang, Ivan Tjuawinata, Kwok-Yan Lam. *K-means clustering with local dχ-privacy for privacy-preserving data analysis.* Journal of LaTeX Class Files, Vol. 14, No. 8, 2021.  
-> Fan Chen et al. *BPGT: A Novel Privacy-Preserving K-Means Clustering Framework to Guarantee Local dχ-privacy*, 2024.
+> Fan Chen et al. *BPGT: A Novel Privacy-Preserving K-Means Clustering Framework to Guarantee Local dχ-privacy*, 2025.
 
 两篇论文均已附在仓库 (`BPM.pdf`, `BPGT.pdf`)。
 

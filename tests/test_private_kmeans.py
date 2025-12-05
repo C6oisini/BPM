@@ -1,7 +1,7 @@
 import numpy as np
 from sklearn.datasets import make_blobs
 
-from bpm_privacy import PrivateKMeans
+from bpm_privacy import BPMMechanism, KMeansServer, PrivacyClusteringPipeline
 
 
 def _normalized_blobs():
@@ -11,26 +11,31 @@ def _normalized_blobs():
     return (X - X_min) / (X_max - X_min)
 
 
-def test_private_kmeans_outputs_valid_labels():
+def _pipeline(epsilon: float):
+    mechanism = BPMMechanism(epsilon=epsilon, L=0.4, random_state=0)
+    server = KMeansServer(n_clusters=3, random_state=0)
+    return PrivacyClusteringPipeline(mechanism, server, n_clusters=3)
+
+
+def test_bpm_mechanism_bounds():
     X = _normalized_blobs()
-    np.random.seed(0)
-    model = PrivateKMeans(n_clusters=3, epsilon=3.0, L=0.4, random_state=0)
-    model.fit(X)
-    labels = model.predict(X)
-    assert labels.shape[0] == X.shape[0]
-    assert np.all(model.X_perturbed_ >= -model.L - 1e-9)
-    assert np.all(model.X_perturbed_ <= 1 + model.L + 1e-9)
+    pipe = _pipeline(3.0)
+    pipe.fit(X)
+    assert pipe.labels_.shape[0] == X.shape[0]
+    L = pipe.mechanism.L
+    assert np.all(pipe.X_perturbed_ >= -L - 1e-9)
+    assert np.all(pipe.X_perturbed_ <= 1 + L + 1e-9)
 
 
 def test_higher_epsilon_improves_sse():
     X = _normalized_blobs()
     np.random.seed(1)
-    low_privacy = PrivateKMeans(n_clusters=3, epsilon=0.5, L=0.4, random_state=0)
+    low_privacy = _pipeline(0.5)
     low_privacy.fit(X)
     sse_low = low_privacy.compute_sse(X)
 
     np.random.seed(1)
-    high_privacy = PrivateKMeans(n_clusters=3, epsilon=4.0, L=0.4, random_state=0)
+    high_privacy = _pipeline(4.0)
     high_privacy.fit(X)
     sse_high = high_privacy.compute_sse(X)
 

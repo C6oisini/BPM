@@ -1,9 +1,8 @@
 """
-Unified BPM (Bounded Perturbation Mechanism) toolkit.
+Unified BPM/BPGM toolkit.
 
-This package bundles the core BPM mechanism plus privacy-preserving clustering
-algorithms so callers can simply import ``bpm_privacy`` instead of juggling
-separate ``bpm`` and ``clustering`` modules.
+Mechanisms (client-side perturbation) and server-side clustering algorithms
+can be composed via :class:`PrivacyClusteringPipeline`.
 """
 
 from .mechanism import (
@@ -16,18 +15,24 @@ from .mechanism import (
     compute_p_L,
 )
 from .sampling import bpm_sampling, sample_f1, sample_f2, sample_radius
-from .private_kmeans import PrivateKMeans
-from .private_gmm import PrivateGMM
-from .private_tmm import PrivateTMM, TMM
+from .mechanisms import ClientMechanism, BPMMechanism, BPGMMechanism
+from .server_algorithms import ServerAlgorithm, KMeansServer, GMMServer, TMMServer
+from .pipeline import PrivacyClusteringPipeline
 from .bpgt import BPGM, BPGT
+from .private_tmm import TMM
 
 __all__ = [
     "BPM",
     "BPGM",
+    "BPGMMechanism",
+    "BPMMechanism",
     "BPGT",
-    "PrivateGMM",
-    "PrivateKMeans",
-    "PrivateTMM",
+    "ClientMechanism",
+    "ServerAlgorithm",
+    "PrivacyClusteringPipeline",
+    "KMeansServer",
+    "GMMServer",
+    "TMMServer",
     "TMM",
     "bpm_sampling",
     "compute_B_L_integral",

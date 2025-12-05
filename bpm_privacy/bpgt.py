@@ -20,7 +20,9 @@ from typing import Optional
 
 import numpy as np
 
-from .private_tmm import TMM
+from .mechanisms import BPGMMechanism
+from .server_algorithms import TMMServer
+from .pipeline import PrivacyClusteringPipeline
 
 
 def _ensure_rng(random_state: Optional[int]) -> np.random.Generator:
@@ -111,9 +113,9 @@ class BPGM:
         return synthetic
 
 
-class BPGT:
+class BPGT(PrivacyClusteringPipeline):
     """
-    Full BPGT framework: user-side BPGM + server-side TK-means (TMM).
+    Convenience wrapper: BPGM mechanism + TMM server (i.e., original BPGT).
     """
 
     def __init__(
@@ -128,67 +130,19 @@ class BPGT:
         gd_max_iter: int = 200,
         tmm_max_iter: int = 100,
         tmm_tol: float = 1e-3,
-        tmm_fixed_nu: bool = True,
     ) -> None:
-        self.n_clusters = n_clusters
-        self.random_state = random_state
-        self.bpgm = BPGM(
-            BPGMConfig(
-                epsilon=epsilon,
-                L=L,
-                lr=gd_lr,
-                tol=gd_tol,
-                max_iter=gd_max_iter,
-            ),
+        mechanism = BPGMMechanism(
+            epsilon=epsilon,
+            L=L,
             random_state=random_state,
+            lr=gd_lr,
+            tol=gd_tol,
+            max_iter=gd_max_iter,
         )
-        self.tmm_params = dict(
+        server = TMMServer(
             n_components=n_clusters,
-            nu=15.0,
-            alpha=0.01,
             max_iter=tmm_max_iter,
             tol=tmm_tol,
             random_state=random_state,
-            fixed_nu=tmm_fixed_nu,
-            verbose=False,
         )
-        self.synthetic_: Optional[np.ndarray] = None
-        self.labels_: Optional[np.ndarray] = None
-        self.cluster_centers_: Optional[np.ndarray] = None
-        self.model_: Optional[TMM] = None
-        self.L = L
-
-    def fit(self, X: np.ndarray) -> "BPGT":
-        if np.any(X < 0) or np.any(X > 1):
-            raise ValueError("BPGT expects data normalized to [0, 1]^d.")
-
-        synthetic = self.bpgm.perturb_dataset(X)
-        tmm = TMM(**self.tmm_params)
-        tmm.fit(synthetic)
-
-        self.synthetic_ = synthetic
-        self.model_ = tmm
-        self.cluster_centers_ = tmm.means_
-        self.labels_ = tmm.labels_
-        return self
-
-    def predict(self, X: np.ndarray) -> np.ndarray:
-        if self.cluster_centers_ is None:
-            raise ValueError("Model not fitted yet.")
-        distances = np.linalg.norm(
-            X[:, np.newaxis] - self.cluster_centers_[np.newaxis, :], axis=2
-        )
-        return np.argmin(distances, axis=1)
-
-    def compute_sse(self, X: np.ndarray) -> float:
-        if self.cluster_centers_ is None or self.labels_ is None:
-            raise ValueError("Model not fitted yet.")
-        sse = 0.0
-        for idx in range(self.n_clusters):
-            cluster_points = X[self.labels_ == idx]
-            if cluster_points.size == 0:
-                continue
-            sse += np.sum(
-                np.linalg.norm(cluster_points - self.cluster_centers_[idx], axis=1) ** 2
-            )
-        return float(sse)
+        super().__init__(mechanism, server, n_clusters=n_clusters)
