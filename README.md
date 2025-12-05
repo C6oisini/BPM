@@ -1,6 +1,6 @@
 # BPM / BPGT 隐私聚类工具箱
 
-围绕 **Bounded Perturbation Mechanism (BPM)** 与 **BPGT 框架** 搭建的开源实现：提供核心 Python 包、批量实验脚本、历史图表生成工具，便于复现论文 *“K-means clustering with local dχ-privacy”* 与 *“BPGT: A Novel Privacy-Preserving K-Means Clustering Framework to Guarantee Local dχ-privacy”* 中的算法，并将其拓展到新的数据集。
+围绕 **Bounded Perturbation Mechanism (BPM)** 与 **BPGT 框架** 搭建的开源实现：提供核心 Python 包、批量实验脚本、历史图表生成工具，便于复现论文 *“K-means clustering with local dχ-privacy *for privacy-preserving data analysis*”* 与 *“BPGT: A Novel Privacy-Preserving K-Means Clustering Framework to Guarantee Local dχ-privacy”* 中的算法，并将其拓展到新的数据集。
 
 ---
 
@@ -88,7 +88,6 @@ pip install -r requirements.txt
 │   └── legacy_plots.py       # 经典 Iris 指标曲线
 ├── tests/                    # pytest 用例
 ├── figures/、figures-exp/    # 示例图输出
-├── BPM.pdf / BPGT.pdf        # 论文
 ├── pyproject.toml  /  requirements.txt  /  uv.lock
 └── graduate.egg-info         # 可编辑安装元数据
 ```
@@ -164,27 +163,14 @@ uv run pytest    # 或 python -m pytest
 
 ---
 
-## Roadmap
-
-- [ ] 增加 Laplace / Gaussian 对照基线。
-- [ ] 提供教学版 Jupyter Notebook 与数据可视化。
-- [ ] 发布常见 ε/L 网格的预生成 CSV 结果。
-
-欢迎通过 Issue / PR 交流想法或提交改进。
-
----
-
 ## 引用
 
 如在研究或产品中使用此实现，请引用以下论文并（可选）附上仓库链接：
 
-> Mengmeng Yang, Ivan Tjuawinata, Kwok-Yan Lam. *K-means clustering with local dχ-privacy for privacy-preserving data analysis.* Journal of LaTeX Class Files, Vol. 14, No. 8, 2021.  
 > Fan Chen et al. *BPGT: A Novel Privacy-Preserving K-Means Clustering Framework to Guarantee Local dχ-privacy*, 2025.
-
-两篇论文均已附在仓库 (`BPM.pdf`, `BPGT.pdf`)。
 
 ---
 
 ## 许可与声明
 
-本项目面向研究与实验用途。请遵守所在地区的隐私法规，并对 BPM / BPGT 的原作者给予适当致谢。如需展示基于本工具箱的成果或有任何疑问，欢迎在 Issues 中讨论。 
+本项目面向研究与实验用途。请遵守所在地区的隐私法规，并对 BPGT 的原作者给予适当致谢。如需展示基于本工具箱的成果或有任何疑问，欢迎在 Issues 中讨论。 
