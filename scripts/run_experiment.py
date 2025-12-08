@@ -224,7 +224,6 @@ def create_mechanism(
             synth_lr=distance_args["lr"],
             synth_tol=distance_args["tol"],
             synth_max_iter=distance_args["max_iter"],
-            max_distance=distance_args["cim_max_distance"],
         )
     raise ValueError(f"Unknown mechanism '{name}'")
 
@@ -466,7 +465,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--distance-lr", type=float, default=0.1, help="Learning rate for BLM/CIM synthetic reconstruction.")
     parser.add_argument("--distance-tol", type=float, default=1e-4, help="Tolerance for the synthetic distance matching objective.")
     parser.add_argument("--distance-max-iter", type=int, default=200, help="Maximum GD iterations for BLM/CIM synthetic reconstruction.")
-    parser.add_argument("--cim-max-distance", type=float, default=1.0, help="Maximum distance support used by the CIM noise sampler (default 1.0 per original paper).")
     return parser.parse_args()
 
 
@@ -495,7 +493,6 @@ def main() -> None:
         "lr": args.distance_lr,
         "tol": args.distance_tol,
         "max_iter": args.distance_max_iter,
-        "cim_max_distance": args.cim_max_distance,
     }
     true_centers = compute_true_centers(X, y_true, n_clusters)
 

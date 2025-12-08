@@ -412,9 +412,7 @@ class CIMMechanism(_DistancePerturbationMechanism):
         synth_lr: float = 0.1,
         synth_tol: float = 1e-4,
         synth_max_iter: int = 200,
-        max_distance: float = 1.0,
     ) -> None:
-        self.max_distance = max_distance
         super().__init__(
             epsilon=epsilon,
             random_state=random_state,
@@ -427,4 +425,4 @@ class CIMMechanism(_DistancePerturbationMechanism):
         return (X.min(axis=0), X.max(axis=0))
 
     def _support(self, X: np.ndarray) -> float:
-        return self.max_distance
+        return 1.0
