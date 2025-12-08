@@ -1,176 +1,123 @@
-# BPM / BPGT 隐私聚类工具箱
+# d_privacy：距离隐私聚类工具箱
 
-围绕 **Bounded Perturbation Mechanism (BPM)** 与 **BPGT 框架** 搭建的开源实现：提供核心 Python 包、批量实验脚本、历史图表生成工具，便于复现论文 *“K-means clustering with local dχ-privacy *for privacy-preserving data analysis*”* 与 *“BPGT: A Novel Privacy-Preserving K-Means Clustering Framework to Guarantee Local dχ-privacy”* 中的算法，并将其拓展到新的数据集。
+`d_privacy` 是一套面向局部隐私（Local Privacy）场景的聚类工具。它包含四种客户端机制（BPM、BPGM、BLM、CIM）、三种服务器端聚类算法（KMeans、GMM、TMM）以及可组合的 `PrivacyClusteringPipeline`。通过 `scripts/run_experiment.py` 可以批量扫描 ε（及需要时的 L）并输出 CSV / 折线图，`scripts/inspect_mechanism.py` 则可视化 BPGM 的采样区域。
 
----
+## 主要特性
 
-## 核心功能
+- **机制可插拔**：  
+  - `BPMMechanism`（经典 BPM，报告空间由用户指定 `L`）。  
+  - `BPGMMechanism`（BPGT 里的截断指数噪声 + Adam 合成数据，同样需要 `L`）。  
+  - `BLMMechanism`（自动计算数据集中任意两点的最大距离并作为噪声上限，不再使用 L）。  
+  - `CIMMechanism`（只受 ε 和 `--cim-max-distance` 控制）。  
 
-- **客户端机制可插拔**：`BPMMechanism`（经典 BPM）与 `BPGMMechanism`（截断指数噪声 + Adam 合成数据）分别实现两种 dχ-privacy 隐私扰动。
-- **服务器算法独立**：`KMeansServer`、`GMMServer`、`TMMServer` 在服务器端处理扰动数据；任意机制 × 算法组合都可通过 `PrivacyClusteringPipeline` 组装。
-- **BPGT 兼容**：`BPGT` 仅是 `BPGMMechanism + TMMServer` 的组合，保留原论文接口同时支持自由组合。
-- **统一实验入口**：`scripts/run_experiment.py` 扫描 ε / L 网格、重复多次取均值，输出 SSE / Silhouette / ARI / NMI 表格并可生成每个机制/算法/L 的折线图。
-- **机制诊断 CLI**：`scripts/inspect_mechanism.py` 打印 λ<sub>L</sub>、p<sub>L</sub>、λ<sub>2,r</sub> 等常数，可在 2D 场景下可视化采样分布。
-- **历史图表复现**：`scripts/legacy_figures.py`、`scripts/legacy_plots.py` 一键输出旧仓库中的 PNG（如 `iris_evaluation.png`、`kmeans_vs_gmm.png`），方便撰写报告。
-- **pytest 覆盖**：`tests/` 内的用例验证噪声采样、BPGM/BPGT 训练及组合式管线，便于在 CI 中自动回归。
+- **服务器端自由组合**：`KMeansServer`、`GMMServer`、`TMMServer` 都可接入 `PrivacyClusteringPipeline`，可实现任意机制 × 服务器的实验矩阵。
 
----
+- **实验脚本**：`scripts/run_experiment.py` 支持：
+  - 批量扫描 ε / L 网格（仅 BPM/BPGM 使用 L）。
+  - 输出 SSE / Silhouette / ARI / NMI / RE 指标。
+  - 生成 ε–性能折线图（SVG/PNG）。
 
-## BPGT 框架一览
-
-- **BPGM（Bounded Perturbation Generation Mechanism）**  
-  按式 (5) 采样截断指数噪声距离 \hat{d}，利用 Adam 最小化  
-  `loss = (||r - \hat{r}|| - \hat{d})^2`，生成受限在 `[−L, 1 + L]^d` 的合成数据，保证 dχ-privacy。
-- **TK-means**  
-  在服务器端使用重尾的 T-Mixture Model + EM（算法 3）对合成数据聚类，获得鲁棒质心并回传标签。
-
-直接调用示例：
-
-```python
-from bpm_privacy import BPGT
-
-bpgt = BPGT(
-    n_clusters=3,
-    epsilon=2.0,
-    L=0.5,
-    random_state=42,
-    gd_lr=0.05,
-    gd_tol=1e-3,
-    gd_max_iter=200,
-)
-bpgt.fit(X_normalized)        # X 需提前归一化到 [0,1]^d
-labels = bpgt.predict(X_normalized)
-print("Private SSE:", bpgt.compute_sse(X_normalized))
-```
-
----
+- **BPGM 采样可视化**：`scripts/inspect_mechanism.py` 打印 BPGM 配置、距离统计，并在 2D 时绘出采样散点。
 
 ## 安装
 
-### 推荐：uv 工作流
+建议使用 [uv](https://github.com/astral-sh/uv)：
 
 ```bash
-uv venv                               # 基于 pyproject 创建 .venv
-source .venv/bin/activate             # Windows: .\.venv\Scripts\Activate.ps1
-uv pip install -e .                   # 安装 bpm_privacy（可编辑模式）
-uv pip install -r requirements.txt    # 如需锁定依赖，再安装 requirements
+uv venv
+source .venv/bin/activate
+uv pip install -e .
+uv pip install -r requirements.txt    # 若需固定版本
 ```
 
-之后可使用 `uv run python scripts/run_experiment.py ...` 或 `uv run pytest`。
-
-### 备用：原生 pip
+若使用原生 pip：
 
 ```bash
-python3.12 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 pip install -r requirements.txt
 ```
 
----
-
 ## 目录结构
 
 ```
 .
-├── bpm_privacy/
-│   ├── mechanism.py          # BPM 数学构件
-│   ├── sampling.py           # BPM 采样算法
-│   ├── mechanisms.py         # BPMMechanism / BPGMMechanism
-│   ├── server_algorithms.py  # KMeansServer / GMMServer / TMMServer
-│   ├── pipeline.py           # PrivacyClusteringPipeline（机制 × 服务器）
-│   ├── private_tmm.py        # TMM 数学实现（服务器端使用）
-│   └── bpgt.py               # BPGM 核心 + BPGT 兼容封装
+├── d_privacy/
+│   ├── client.py      # BPM/BPGM/BLM/CIM 实现
+│   ├── server.py      # KMeans/GMM/TMM 服务器及 TMM 数学实现
+│   └── pipeline.py    # PrivacyClusteringPipeline + BPGT 封装
 ├── scripts/
-│   ├── run_experiment.py     # 批量实验 CLI（含折线图）
-│   ├── inspect_mechanism.py  # 机制常数与采样诊断
-│   ├── legacy_figures.py     # 生成历史 PNG
-│   └── legacy_plots.py       # 经典 Iris 指标曲线
-├── tests/                    # pytest 用例
-├── figures/、figures-exp/    # 示例图输出
-├── pyproject.toml  /  requirements.txt  /  uv.lock
-└── graduate.egg-info         # 可编辑安装元数据
+│   ├── run_experiment.py
+│   └── inspect_mechanism.py
+├── tests/
+├── pyproject.toml / requirements.txt / uv.lock
 ```
-
----
 
 ## 快速开始
 
-### 1. 批量实验 + 绘图
+### 批量实验
+
+以 iris 数据集为例，运行 BPM + BPGM + BLM + CIM，KMeans 服务器，并输出 CSV / 图像：
 
 ```bash
 uv run scripts/run_experiment.py \
   --dataset iris \
-  --mechanisms bpm bpgm \
-  --servers kmeans gmm tmm \
-  --epsilons 0.5 1 2 4 \
-  --Ls 0.3 0.5 \
-  --trials 5 \
-  --csv results.csv \
-  --plot figures-exp/full-exp.png
+  --mechanisms bpm bpgm blm cim \
+  --servers kmeans \
+  --epsilons 0.2 0.5 1 2 4 \
+  --Ls 0.2 0.4 \
+  --trials 3 \
+  --csv iris_results.csv \
+  --plot figures-exp/iris_results.png
 ```
 
-常用参数（含枚举值）：
+说明：
 
-| 参数 | 说明 |
+| 参数 | 作用 |
 |------|------|
-| `--dataset {iris, blobs}` | 选择真实或合成数据集。 |
-| `--mechanisms {bpm, bpgm}` | 选择客户端隐私机制（可多选，逐一组合）。 |
-| `--servers {kmeans, gmm, tmm}` | 选择服务器端聚类算法（可多选，逐一组合）。 |
-| `--epsilons`, `--Ls` | 输入若干 ε / L 组合衡量隐私-效用。 |
-| `--trials N` | 每组配置重复 N 次求平均。 |
-| `--skip-baseline` | 仅跑隐私组合时开启。 |
-| `--csv path` | 输出结果表格。 |
-| `--plot path` | 保存 SSE / Silhouette / ARI / NMI vs ε 的折线图（按 Mechanism+Server+L 区分）。 |
+| `--dataset {iris, blobs}` | 选择内置数据集。 |
+| `--mechanisms ...` | 客户端机制，`bpm/bpgm` 需要 `--Ls`，`blm/cim` 会忽略 `--Ls`。 |
+| `--servers ...` | 可选 `kmeans` / `gmm` / `tmm`。 |
+| `--epsilons ...` | ε 网格。 |
+| `--Ls ...` | 仅 BPM/BPGM 使用的报告空间参数；BLM/CIM 自动计算。 |
+| `--trials` | 每组配置重复次数。 |
+| `--csv` / `--plot` | 输出表格和折线图。 |
 
-其他常用参数：`--samples`、`--features`、`--clusters`、`--seed`、`--tmm-*`（控制 TMMServer）。  
-若选择 `bpgm`，还可设置 `--bpgt-gd-lr`、`--bpgt-gd-tol`、`--bpgt-gd-max-iter` 控制合成数据的 Adam 步长/迭代数。
+附加参数：
 
-### 2. 检查 BPM / BPGM 机制
+- BPGM：`--bpgt-gd-lr`、`--bpgt-gd-tol`、`--bpgt-gd-max-iter`（控制 Adam）。
+- BLM / CIM：`--distance-lr`、`--distance-tol`、`--distance-max-iter`（合成数据的梯度下降），`--cim-max-distance`（CIM 噪声支撑上限）。
+- TMM：`--tmm-*` 诸参数控制服务器端 EM。
+
+> 注：`BLMMechanism` 会在运行时计算归一化后数据的最大 pairwise 距离并作为噪声上限；`CIMMechanism` 不含 L，完全由 ε 和 `--cim-max-distance` 决定。
+
+### BPGM 采样诊断
 
 ```bash
-python scripts/inspect_mechanism.py \
+uv run scripts/inspect_mechanism.py \
   --epsilon 2.0 \
-  --L 0.3 \
+  --L 0.5 \
   --dimension 2 \
   --samples 2000 \
-  --plot figures/bpm_scatter.png
+  --plot figures/bpgm_sampling.png
 ```
 
-打印 λ<sub>L</sub>、p<sub>L</sub>、λ<sub>2,r</sub> 并在 2D 情况下生成采样散点图。
+脚本会打印 BPGM 配置、样本距离、球内/报告空间命中率，并在 2D 情况下生成散点图（可用于分析合成点范围）。
 
-### 3. 重建历史图表
+## 实验输出
 
-```bash
-python scripts/legacy_figures.py           # 生成所有旧 PNG
-python scripts/legacy_plots.py             # Iris 指标曲线与聚类散点
-python scripts/legacy_figures.py --figures kmeans_vs_gmm nonlinear_analysis
-```
+`run_experiment.py` 的 CSV 包含以下列：
 
-图像保存在 `figures/`，命名保持与旧仓库一致（如 `iris_evaluation.png`、`all_methods_comparison.png`）。
+- `mode`（baseline/private）、`mechanism`、`server`、`epsilon`、`L`（对无 L 机制设为 `-`）。
+- 指标：`SSE`、`Silhouette`、`ARI`、`NMI`、`RE`（质心相对误差，只有数据集自带标签时才有效）。
 
----
+折线图会针对每个服务器绘制多条曲线，横轴为 ε，纵轴为相应指标，并将四种机制放在一张图中便于对比。
 
 ## 测试
 
 ```bash
-uv run pytest    # 或 python -m pytest
+uv run pytest
 ```
 
-- `tests/test_mechanism.py`：验证 BPM 密度单调、采样范围及 p<sub>L</sub> 的经验命中率。
-- `tests/test_private_kmeans.py`：确保扰动数据位于报告空间，并测试 ε 增大后的 SSE 改善趋势。
-- `tests/test_bpgt.py`：检查 BPGM 的噪声距离与合成记录范围，以及 BPGT 的端到端训练。
-
----
-
-## 引用
-
-如在研究或产品中使用此实现，请引用以下论文并（可选）附上仓库链接：
-
-> Fan Chen et al. *BPGT: A Novel Privacy-Preserving K-Means Clustering Framework to Guarantee Local dχ-privacy*, 2025.
-
----
-
-## 许可与声明
-
-本项目面向研究与实验用途。请遵守所在地区的隐私法规，并对 BPGT 的原作者给予适当致谢。如需展示基于本工具箱的成果或有任何疑问，欢迎在 Issues 中讨论。 
+覆盖度集中在噪声采样、BPGM/BPGT 流程以及组合式管线。根据需要可扩展更多数据集或服务器实现。

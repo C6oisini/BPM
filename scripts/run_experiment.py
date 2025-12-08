@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 from matplotlib import pyplot as plt
+from scipy.optimize import linear_sum_assignment
 from sklearn.cluster import KMeans
 from sklearn.datasets import load_iris, make_blobs
 from sklearn.metrics import (
@@ -27,10 +29,12 @@ from sklearn.metrics import (
 )
 from sklearn.mixture import GaussianMixture
 
-from bpm_privacy import (
+from d_privacy import (
     ClientMechanism,
     BPMMechanism,
     BPGMMechanism,
+    BLMMechanism,
+    CIMMechanism,
     GMMServer,
     ServerAlgorithm,
     KMeansServer,
@@ -111,14 +115,20 @@ class TrialMetrics:
     centers: Optional[np.ndarray]
 
 
-def summarize_metrics(X: np.ndarray, y_true: Optional[np.ndarray], trial_results: Iterable[TrialMetrics]) -> Dict[str, float]:
+def summarize_metrics(
+    X: np.ndarray,
+    y_true: Optional[np.ndarray],
+    trial_results: Iterable[TrialMetrics],
+    true_centers: Optional[np.ndarray],
+) -> Dict[str, float]:
     """Aggregate metrics across multiple trials."""
-    sses, silhouettes, aris, nmis = [], [], [], []
+    sses, silhouettes, aris, nmis, res = [], [], [], [], []
     for trial in trial_results:
         sses.append(compute_sse(X, trial.labels, trial.centers))
         silhouettes.append(safe_silhouette(X, trial.labels))
         aris.append(safe_ari(y_true, trial.labels))
         nmis.append(safe_nmi(y_true, trial.labels))
+        res.append(compute_re(trial.centers, true_centers))
 
     def nanmean(values: List[float]) -> float:
         arr = np.array(values, dtype=float)
@@ -131,19 +141,66 @@ def summarize_metrics(X: np.ndarray, y_true: Optional[np.ndarray], trial_results
         "silhouette": nanmean(silhouettes),
         "ari": nanmean(aris),
         "nmi": nanmean(nmis),
+        "re": nanmean(res),
     }
+
+
+def compute_true_centers(
+    X: np.ndarray, y_true: Optional[np.ndarray], n_clusters: int
+) -> Optional[np.ndarray]:
+    if y_true is None:
+        return None
+    unique_labels = np.unique(y_true)
+    if len(unique_labels) != n_clusters:
+        return None
+    centers = []
+    for label in sorted(unique_labels):
+        mask = y_true == label
+        if not np.any(mask):
+            return None
+        centers.append(np.mean(X[mask], axis=0))
+    return np.asarray(centers)
+
+
+def compute_re(
+    centers: Optional[np.ndarray], true_centers: Optional[np.ndarray]
+) -> float:
+    if centers is None or true_centers is None:
+        return float("nan")
+    if centers.shape[0] != true_centers.shape[0]:
+        return float("nan")
+
+    cost_matrix = np.linalg.norm(
+        centers[:, np.newaxis, :] - true_centers[np.newaxis, :, :], axis=2
+    )
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    errors = []
+    for pred_idx, true_idx in zip(row_ind, col_ind):
+        denom = np.linalg.norm(true_centers[true_idx])
+        denom = denom if denom > 1e-12 else 1e-12
+        errors.append(
+            np.linalg.norm(centers[pred_idx] - true_centers[true_idx]) / denom
+        )
+    if not errors:
+        return float("nan")
+    return float(np.mean(errors))
 
 
 def create_mechanism(
     name: str,
     epsilon: float,
-    L: float,
+    L: Optional[float],
     seed: int,
     bpgt_args: Dict[str, float],
+    distance_args: Dict[str, float],
 ) -> ClientMechanism:
     if name == "bpm":
+        if L is None:
+            raise ValueError("BPM requires L; ensure it is provided in --Ls.")
         return BPMMechanism(epsilon=epsilon, L=L, random_state=seed)
     if name == "bpgm":
+        if L is None:
+            raise ValueError("BPGM requires L; ensure it is provided in --Ls.")
         return BPGMMechanism(
             epsilon=epsilon,
             L=L,
@@ -151,6 +208,23 @@ def create_mechanism(
             lr=bpgt_args["gd_lr"],
             tol=bpgt_args["gd_tol"],
             max_iter=bpgt_args["gd_max_iter"],
+        )
+    if name == "blm":
+        return BLMMechanism(
+            epsilon=epsilon,
+            random_state=seed,
+            synth_lr=distance_args["lr"],
+            synth_tol=distance_args["tol"],
+            synth_max_iter=distance_args["max_iter"],
+        )
+    if name == "cim":
+        return CIMMechanism(
+            epsilon=epsilon,
+            random_state=seed,
+            synth_lr=distance_args["lr"],
+            synth_tol=distance_args["tol"],
+            synth_max_iter=distance_args["max_iter"],
+            max_distance=distance_args["cim_max_distance"],
         )
     raise ValueError(f"Unknown mechanism '{name}'")
 
@@ -184,6 +258,7 @@ def run_baseline(
     n_clusters: int,
     seed: int,
     tmm_params: Dict[str, float],
+    true_centers: Optional[np.ndarray],
 ) -> Dict[str, float]:
     """Non-private baseline using the specified server-side algorithm only."""
     if server == "kmeans":
@@ -211,7 +286,9 @@ def run_baseline(
     else:
         raise ValueError(f"Unsupported server '{server}'.")
 
-    return summarize_metrics(X, y_true, [TrialMetrics(labels=labels, centers=centers)])
+    return summarize_metrics(
+        X, y_true, [TrialMetrics(labels=labels, centers=centers)], true_centers
+    )
 
 
 def run_private_trials(
@@ -221,17 +298,26 @@ def run_private_trials(
     y_true: Optional[np.ndarray],
     n_clusters: int,
     epsilon: float,
-    L: float,
+    L: Optional[float],
     trials: int,
     seed: int,
     tmm_params: Dict[str, float],
     bpgt_params: Dict[str, float],
+    distance_params: Dict[str, float],
+    true_centers: Optional[np.ndarray],
 ) -> Dict[str, float]:
     """Execute multiple private trials and aggregate metrics."""
     trial_results: List[TrialMetrics] = []
     for t in range(trials):
         trial_seed = seed + t
-        mechanism = create_mechanism(mechanism_name, epsilon, L, trial_seed, bpgt_params)
+        mechanism = create_mechanism(
+            mechanism_name,
+            epsilon,
+            L,
+            trial_seed,
+            bpgt_params,
+            distance_params,
+        )
         server = create_server(server_name, n_clusters, trial_seed, tmm_params)
         pipeline = PrivacyClusteringPipeline(mechanism, server, n_clusters=n_clusters)
         pipeline.fit(X)
@@ -239,7 +325,7 @@ def run_private_trials(
             TrialMetrics(labels=pipeline.predict(X), centers=pipeline.cluster_centers_)
         )
 
-    return summarize_metrics(X, y_true, trial_results)
+    return summarize_metrics(X, y_true, trial_results, true_centers)
 
 
 def format_float(value: float) -> str:
@@ -248,7 +334,10 @@ def format_float(value: float) -> str:
 
 def print_table(rows: List[Dict[str, object]]) -> None:
     """Pretty-print experiment results."""
-    header = f"{'Mode':<10} {'Mechanism':<12} {'Server':<10} {'ε':<6} {'L':<6} {'SSE':<12} {'Silhouette':<12} {'ARI':<12} {'NMI':<12}"
+    header = (
+        f"{'Mode':<10} {'Mechanism':<12} {'Server':<10} {'ε':<6} {'L':<6} "
+        f"{'SSE':<12} {'Silhouette':<12} {'ARI':<12} {'NMI':<12} {'RE':<12}"
+    )
     print(header)
     print("-" * len(header))
     for row in rows:
@@ -259,7 +348,8 @@ def print_table(rows: List[Dict[str, object]]) -> None:
             f"{format_float(row['sse']):<12} "
             f"{format_float(row['silhouette']):<12} "
             f"{format_float(row['ari']):<12} "
-            f"{format_float(row['nmi']):<12}"
+            f"{format_float(row['nmi']):<12} "
+            f"{format_float(row.get('re', float('nan'))):<12}"
         )
 
 
@@ -268,7 +358,18 @@ def maybe_write_csv(path: Optional[Path], rows: List[Dict[str, object]]) -> None
     if path is None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["mode", "mechanism", "server", "epsilon", "L", "sse", "silhouette", "ari", "nmi"]
+    fieldnames = [
+        "mode",
+        "mechanism",
+        "server",
+        "epsilon",
+        "L",
+        "sse",
+        "silhouette",
+        "ari",
+        "nmi",
+        "re",
+    ]
     with path.open("w", newline="") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
@@ -289,10 +390,13 @@ def plot_curves(rows: List[Dict[str, object]], output: Optional[Path]) -> None:
         }
     )
     epsilons = sorted({row["epsilon"] for row in rows if row["epsilon"] is not None})
-    metrics = ["sse", "silhouette", "ari", "nmi"]
+    metrics = ["sse", "silhouette", "ari", "nmi", "re"]
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
-    for metric, ax in zip(metrics, axes.flatten()):
+    ncols = 2
+    nrows = math.ceil(len(metrics) / ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(12, 4 * nrows))
+    axes = np.array(axes).reshape(-1)
+    for metric, ax in zip(metrics, axes):
         for mechanism, server, L in series_keys:
             ys = []
             for epsilon in epsilons:
@@ -318,6 +422,8 @@ def plot_curves(rows: List[Dict[str, object]], output: Optional[Path]) -> None:
         ax.set_ylabel(metric.upper())
         ax.grid(alpha=0.3)
         ax.legend()
+    for ax in axes[len(metrics) :]:
+        ax.set_visible(False)
     fig.tight_layout()
     output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output, dpi=200)
@@ -333,7 +439,7 @@ def parse_args() -> argparse.Namespace:
         "--mechanisms",
         nargs="+",
         default=["bpm"],
-        choices=["bpm", "bpgm"],
+        choices=["bpm", "bpgm", "blm", "cim"],
     )
     parser.add_argument(
         "--servers",
@@ -357,6 +463,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bpgt-gd-max-iter", type=int, default=200)
     parser.add_argument("--bpgt-tmm-max-iter", type=int, default=100)
     parser.add_argument("--bpgt-tmm-tol", type=float, default=1e-3)
+    parser.add_argument("--distance-lr", type=float, default=0.1, help="Learning rate for BLM/CIM synthetic reconstruction.")
+    parser.add_argument("--distance-tol", type=float, default=1e-4, help="Tolerance for the synthetic distance matching objective.")
+    parser.add_argument("--distance-max-iter", type=int, default=200, help="Maximum GD iterations for BLM/CIM synthetic reconstruction.")
+    parser.add_argument("--cim-max-distance", type=float, default=1.0, help="Maximum distance support used by the CIM noise sampler (default 1.0 per original paper).")
     return parser.parse_args()
 
 
@@ -381,6 +491,13 @@ def main() -> None:
         "gd_tol": args.bpgt_gd_tol,
         "gd_max_iter": args.bpgt_gd_max_iter,
     }
+    distance_params = {
+        "lr": args.distance_lr,
+        "tol": args.distance_tol,
+        "max_iter": args.distance_max_iter,
+        "cim_max_distance": args.cim_max_distance,
+    }
+    true_centers = compute_true_centers(X, y_true, n_clusters)
 
     if not args.skip_baseline:
         for server in args.servers:
@@ -391,6 +508,7 @@ def main() -> None:
                 n_clusters,
                 args.seed,
                 tmm_params,
+                true_centers,
             )
             results.append(
                 {
@@ -403,10 +521,12 @@ def main() -> None:
                 }
             )
 
-    for mechanism in args.mechanisms:
+    mechanisms = args.mechanisms
+    for mechanism in mechanisms:
+        L_values = args.Ls if mechanism in {"bpm", "bpgm"} else [None]
         for server in args.servers:
             for epsilon in args.epsilons:
-                for L in args.Ls:
+                for L in L_values:
                     metrics = run_private_trials(
                         mechanism,
                         server,
@@ -419,6 +539,8 @@ def main() -> None:
                         args.seed,
                         tmm_params,
                         bpgt_params,
+                        distance_params,
+                        true_centers,
                     )
                     results.append(
                         {

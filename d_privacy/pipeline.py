@@ -1,6 +1,4 @@
-"""
-Composable privacy-preserving clustering pipeline.
-"""
+"""Composable client/server clustering pipeline."""
 
 from __future__ import annotations
 
@@ -9,8 +7,8 @@ from typing import Optional
 
 import numpy as np
 
-from .mechanisms import ClientMechanism
-from .server_algorithms import ServerAlgorithm
+from .client import ClientMechanism, BPGMMechanism
+from .server import ServerAlgorithm, TMMServer
 
 
 @dataclass
@@ -21,8 +19,6 @@ class PipelineResult:
 
 
 class PrivacyClusteringPipeline:
-    """Glue code between a client mechanism and a server clustering algorithm."""
-
     def __init__(
         self,
         mechanism: ClientMechanism,
@@ -40,11 +36,8 @@ class PrivacyClusteringPipeline:
     def fit(self, X: np.ndarray) -> "PrivacyClusteringPipeline":
         if np.any(X < 0) or np.any(X > 1):
             raise ValueError("Input data must be normalized to [0,1]^d.")
-
         perturbed = self.mechanism.perturb(X)
-        centers, _ = self.server.fit(perturbed)
-        labels = self.predict_with_centers(X, centers)
-
+        centers, labels = self.server.fit(perturbed)
         self.X_perturbed_ = perturbed
         self.cluster_centers_ = centers
         self.labels_ = labels
@@ -69,3 +62,34 @@ class PrivacyClusteringPipeline:
                 continue
             sse += np.sum(np.linalg.norm(points - self.cluster_centers_[idx], axis=1) ** 2)
         return float(sse)
+
+
+class BPGT(PrivacyClusteringPipeline):
+    def __init__(
+        self,
+        n_clusters: int,
+        epsilon: float,
+        L: float,
+        random_state: Optional[int] = None,
+        *,
+        gd_lr: float = 0.05,
+        gd_tol: float = 1e-3,
+        gd_max_iter: int = 200,
+        tmm_max_iter: int = 100,
+        tmm_tol: float = 1e-3,
+    ) -> None:
+        mechanism = BPGMMechanism(
+            epsilon=epsilon,
+            L=L,
+            random_state=random_state,
+            lr=gd_lr,
+            tol=gd_tol,
+            max_iter=gd_max_iter,
+        )
+        server = TMMServer(
+            n_components=n_clusters,
+            max_iter=tmm_max_iter,
+            tol=tmm_tol,
+            random_state=random_state,
+        )
+        super().__init__(mechanism, server, n_clusters=n_clusters)

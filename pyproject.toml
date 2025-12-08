@@ -17,4 +17,4 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["bpm_privacy*"]
+include = ["d_privacy*"]

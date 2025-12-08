@@ -1,0 +1,65 @@
+bpm
+uv run scripts/run_experiment.py \
+  --dataset iris \
+  --mechanisms bpm \
+  --servers kmeans tmm \
+  --epsilons 0.1 0.5 1 2 3 4 5 6 7 8 9 10 \
+  --Ls 0.1 0.5 1 2 4 8 10 \
+  --trials 5 \
+  --csv iris_bpm.csv \
+  --plot figures-exp/iris_bpm.png
+
+bpgm
+uv run scripts/run_experiment.py \
+  --dataset iris \
+  --mechanisms bpgm \
+  --servers kmeans tmm  \
+  --epsilons 0.1 0.5 1 2 3 4 5 6 7 8 9 10 \
+  --Ls 0.1 0.5 1 2 4 8 10 \
+  --bpgt-gd-lr 0.1 \
+  --bpgt-gd-tol 1e-4 \
+  --bpgt-gd-max-iter 200 \
+  --trials 5 \
+  --csv iris_bpgm.csv \
+  --plot figures-exp/iris_bpgm.png
+
+blm
+uv run scripts/run_experiment.py \
+  --dataset iris \
+  --mechanisms blm \
+  --servers kmeans tmm \
+  --epsilons 0.1 0.5 1 2 3 4 5 6 7 8 9 10 \
+  --trials 5 \
+  --distance-lr 0.1 \
+  --distance-tol 1e-4 \
+  --distance-max-iter 200 \
+  --csv iris_blm.csv \
+  --plot figures-exp/iris_blm.png
+
+
+cim
+uv run scripts/run_experiment.py \
+  --dataset iris \
+  --mechanisms cim \
+  --servers kmeans tmm\
+  --epsilons 0.1 0.5 1 2 3 4 5 6 7 8 9 10 \
+  --trials 5 \
+  --cim-max-distance 1.0 \
+  --distance-lr 0.1 \
+  --distance-tol 1e-4 \
+  --distance-max-iter 200 \
+  --csv iris_cim.csv \
+  --plot figures-exp/iris_cim.png
+
+
+
+
+uv run scripts/inspect_mechanism.py \
+  --epsilon 10 \ 
+  --L 10 \
+  --dimension 2 \
+  --samples 2000 \
+  --lr 0.05 \
+  --tol 1e-3 \
+  --max-iter 200 \
+  --plot figures/bpgm_sampling.png
