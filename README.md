@@ -123,7 +123,7 @@ uv run pytest
 
 ## Follow us
 
-原文：Chen, Fan, et al. 2025. “BPGT: A Novel Privacy-Preserving K-Means Clustering Framework to Guarantee Local dχ-Privacy.” Preprint.
+原文：Chen et al. 2025. “BPGT: A Novel Privacy-Preserving K-Means Clustering Framework to Guarantee Local dχ-Privacy.” Preprint.
 
 👏 欢迎提出问题、提交Issue或发起Pull Request！
 
